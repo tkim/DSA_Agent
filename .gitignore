@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+rag/chroma_db/
+rag/docs/
+*.gguf
+infra/modelfiles/*.modelfile
+eval/results_*.json
+.pytest_cache/
+*.egg-info/
+build/
+dist/
