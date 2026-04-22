@@ -88,6 +88,7 @@ class BaseAgent(ABC):
             messages=messages,
             tools=self.tool_schemas,
             options={"temperature": 0.1, "num_predict": 2048},
+            keep_alive="60m",   # pin model in VRAM between queries
         )
 
     def _run_tool(self, name: str, args: dict) -> dict:

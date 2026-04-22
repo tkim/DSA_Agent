@@ -5,6 +5,12 @@ Opens:  http://localhost:7860
 import gradio as gr
 
 from orchestrator.pipeline import AgentPipeline
+from rag.retriever import _get_embed_model, _get_chroma_client
+
+# Warm the embedding model and Chroma client at startup so the first query
+# doesn't pay the cold-load penalty (~10-20s for SentenceTransformer).
+_get_embed_model()
+_get_chroma_client()
 
 
 def respond(message: str, history: list, platform: str) -> str:
