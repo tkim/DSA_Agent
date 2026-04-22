@@ -13,7 +13,10 @@ Commands (type during chat):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+import ollama
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -22,8 +25,25 @@ from rich.text import Text
 
 console = Console()
 
+_OLLAMA_BASE  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+_AGENT_MODEL  = os.getenv("AGENT_MODEL", "gemma4-agent")
 
-def _warm():
+
+def _warm_ollama():
+    """Load the model into VRAM now so the first query has zero reload cost."""
+    console.print("[dim]Loading model into GPU...[/dim]", end="\r")
+    try:
+        client = ollama.Client(host=_OLLAMA_BASE)
+        # Empty-prompt generate with keep_alive pulls the model into VRAM
+        # and keeps it there for the session lifetime.
+        client.generate(model=_AGENT_MODEL, prompt="", keep_alive="120m")
+        console.print(" " * 40, end="\r")
+    except Exception as exc:
+        console.print(f"\n[yellow]Warning: could not pre-load model ({exc}). "
+                      "First query may be slow.[/yellow]")
+
+
+def _warm_rag():
     """Pre-load embedding model and Chroma client so first query is fast."""
     console.print("[dim]Warming up embedding model...[/dim]", end="\r")
     from rag.retriever import _get_chroma_client, _get_embed_model
@@ -79,7 +99,8 @@ def main():
     args = parser.parse_args()
     current_platform = args.platform
 
-    _warm()
+    _warm_rag()
+    _warm_ollama()
 
     from orchestrator.pipeline import AgentPipeline
     pipeline = AgentPipeline()
