@@ -14,9 +14,13 @@
     if you change the repo path or Python venv location.
 
 .NOTES
-    Does NOT require Administrator rights — the task runs as the current user.
+    Does NOT require Administrator rights — the task runs as the current user
+    using the 'Interactive' logon type.  This means the task only fires when
+    you are logged in, which is fine for a developer workstation.
     Logs are written to: <repo>\rag\refresh.log
 #>
+
+$ErrorActionPreference = 'Stop'   # surface failures — never claim false success
 
 # ---------------------------------------------------------------------------
 # Resolve paths
@@ -67,7 +71,7 @@ $Settings = New-ScheduledTaskSettingsSet `
 
 $Principal = New-ScheduledTaskPrincipal `
     -UserId    "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType S4U `
+    -LogonType Interactive `
     -RunLevel  Limited
 
 # ---------------------------------------------------------------------------
