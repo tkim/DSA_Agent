@@ -291,3 +291,31 @@ python -m pytest tests/ -v   # 35/35 must pass
 | `CHROMA_PERSIST_DIR` | `.\rag\chroma_db` | `.env` |
 | `HF_HUB_OFFLINE` | `1` | `.env` — blocks HuggingFace network after setup |
 | `TRANSFORMERS_OFFLINE` | `1` | `.env` — same |
+
+---
+## Why no agent framework?
+
+Short answer: deliberate, and mostly correct for the local use case.
+
+The DSA agent uses no LangChain, LlamaIndex, LangGraph, CrewAI, AutoGen, or smolagents. The entire agent loop is ~50 lines in base_agent.py.  The core argument against adopting a full framework is due to the current hardware setup (Vulkan, offline, Windows) is unusual enough that the "just works" promise of major frameworks often doesn't hold. The custom loop gives you certainty and simplicity.
+
+Here's the honest tradeoff analysis:
+
+### What you gain by staying framework-free 
+* Zero abstraction overhead - Ollama tool calling goes straight through. No prompt reformatting, no intermediate agent state objects, no chains that add latency.
+* Fully Offline - every framework pulls in dozens of transitive dependencies, many of which phone home (LangChain telemetry, LlamaIndex cloud features). This would break the offline requirements.
+* Debuggable - when something goes wrong, the call stack is shallow. With LangChain you often get 12-layer tracebacks.
+* Smaller footprint - the current pyproject.toml is 13dep. LangChain alone would be 40+.
+* Windows compatibility - several agent frameworks have subtle issues on Windows. (async event loops, file paths, multiprocessing).
+
+### What you lose
+* No ReAct / plan-then-act — frameworks like LangGraph give you explicit reasoning steps (think → act → observe). The current loop is purely reactive.
+* No multi-agent orchestration — CrewAI/AutoGen make cross-platform queries (Databricks + AWS together) straightforward. Building that from scratch here is non-trivial.
+* No tool discovery — LlamaIndex and LangChain can dynamically pick from large tool sets. The current router is a hard-coded 3-way split.
+* Community ecosystem — guardrails, eval integrations, observability hooks all exist as drop-in plugins for major frameworks.
+
+The current architecture for the core loop is clean, fast, and offline-safe. But there are two framework-level capabilities worth adding in the near future.
+
+* smolagents (HuggingFace) — the only major agent framework explicitly designed to run local models with minimal dependencies. Has a LiteLLMModel that wires to Ollama. Could replace the custom tool-calling loop with something that gets plan-then-act reasoning for free. Small install footprint.
+* opentelemetry — not an agent framework, but adds structured tracing to the existing custom loop with almost no code change. One decorator per method. Gives you observability without switching architectures.
+
