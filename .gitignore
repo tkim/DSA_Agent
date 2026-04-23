@@ -4,6 +4,8 @@ __pycache__/
 .env
 rag/chroma_db/
 rag/docs/
+rag/.doc_versions.json
+rag/refresh.log
 *.gguf
 infra/modelfiles/*.modelfile
 eval/results_*.json

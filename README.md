@@ -151,12 +151,76 @@ These prevent the embedding model from attempting any HuggingFace network calls.
 
 ```powershell
 .\rag\fetch_docs.ps1
-python -m rag.ingestor --all
+.\.venv\Scripts\python.exe -m rag.ingestor --all
 ```
 
 Downloads Delta Lake, Snowflake, and AWS documentation and embeds it into a local
 ChromaDB at `rag/chroma_db/`. Also caches the `all-MiniLM-L6-v2` embedding model
 to `%USERPROFILE%\.cache\huggingface\`. After this step no network access is needed.
+
+### 8. Register the weekly auto-refresh task (one-time)
+
+```powershell
+.\infra\setup_refresh_schedule.ps1
+```
+
+Registers a Windows Scheduled Task (`DSA-Agent-RAG-Refresh`) that runs every
+Monday at 03:00. It checks the GitHub commit SHA for each doc source — only
+re-downloads and re-ingests a platform if its docs actually changed. Skips
+silently if the machine is offline. See [Keeping docs current](#keeping-docs-current) below.
+
+---
+
+## Keeping docs current
+
+The RAG corpus tracks **14 doc sources** across public GitHub repos. No
+credentials are required — GitHub's unauthenticated API allows 60 req/hour,
+which is more than enough for a weekly run.
+
+| Platform | Source repos tracked |
+|---|---|
+| Databricks | `delta-io/delta` → `docs/src/content/docs/*.mdx` |
+| Snowflake | `snowflakedb/snowflake-connector-python`, `snowflakedb/snowpark-python`, `Snowflake-Labs/sfquickstarts` (3 guides) |
+| AWS | `boto/botocore` → 6 service JSON files, `awsdocs/amazon-s3-userguide`, `awsdocs/aws-glue-developer-guide` |
+
+### How change detection works
+
+```
+1. GitHub commits API:  GET /repos/{owner}/{repo}/commits?path={docs_path}&per_page=1
+2. Returns the SHA of the most recent commit touching that path
+3. Compare against SHA stored in rag/.doc_versions.json
+4. If different → re-download affected files → re-ingest only that platform
+5. Update stored SHA + timestamp
+```
+
+No diff needed — the SHA is the fingerprint. If the upstream repo merges a
+doc PR, the SHA changes and the next scheduled run picks it up automatically.
+
+### Manual refresh commands
+
+```powershell
+# Check status of all sources (no downloads, no changes)
+.\.venv\Scripts\python.exe -m rag.refresher --check-only
+
+# Refresh only changed sources across all platforms
+.\.venv\Scripts\python.exe -m rag.refresher
+
+# Force re-ingest a specific platform regardless of SHA
+.\.venv\Scripts\python.exe -m rag.refresher --platform databricks --force
+
+# View the scheduled task log
+Get-Content rag\refresh.log -Tail 50
+```
+
+### Optional: higher GitHub API rate limit
+
+The default unauthenticated limit (60 req/hour) is sufficient for weekly runs.
+For frequent manual refreshes, add to `.env`:
+```ini
+GITHUB_TOKEN=ghp_your_personal_access_token
+```
+A classic token with no scopes (read-only public repos) raises the limit to
+5 000 req/hour.
 
 ---
 
@@ -255,6 +319,7 @@ Everything below must be in place before going offline:
 | all-MiniLM-L6-v2 | `%USERPROFILE%\.cache\huggingface\hub\` | `rag/ingestor.py` first run |
 | ChromaDB collections | `rag/chroma_db/` | `python -m rag.ingestor --all` |
 | Python venv | `.venv/` | `py -3.11 -m venv .venv` + `pip install -e .` |
+| Doc version fingerprints | `rag/.doc_versions.json` | Auto-created by `rag/refresher.py` |
 
 Verify at any time:
 ```powershell
