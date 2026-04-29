@@ -47,7 +47,8 @@ No cloud API keys required for the AI layer. No web server. No internet connecti
 │
 ├── orchestrator/
 │   ├── session.py                ← conversation history (deque)
-│   └── pipeline.py               ← router + agents + session wired together
+│   ├── pipeline.py               ← router + agents + session wired together
+│   └── exporter.py               ← markdown export for /save and /copy
 │
 ├── infra/
 │   ├── 00_check_hardware.ps1
@@ -256,8 +257,34 @@ The model stays in VRAM for 2 hours of inactivity. Subsequent queries are immedi
 | Any question | Auto-routed to Databricks / Snowflake / AWS |
 | `/platform aws` | Lock platform for the rest of the session |
 | `/platform auto` | Return to auto-routing |
+| `/save [filename]` | Export the last response to `~/Downloads` as a `.md` file |
+| `/copy` | Copy the last response (raw markdown) to the system clipboard |
 | `/reset` | Clear conversation history |
 | `/quit` or `Ctrl-C` | Exit |
+
+### Exporting responses
+
+Use `/save` after any answer to write a self-contained markdown file to your
+Downloads folder. The file includes YAML frontmatter (timestamp, platform,
+latency, tools called, RAG sources, original query) and a tool-call appendix —
+useful for sharing in Notion, Obsidian, GitHub issues, or just keeping a
+durable record of an investigation.
+
+```
+you> List all tables in main.bronze and show row counts
+...response renders...
+you> /save delta-tables-investigation
+Saved: C:\Users\tckim\Downloads\delta-tables-investigation.md
+
+you> /copy
+Copied 2418 chars to clipboard.
+```
+
+`/save` with no filename defaults to `dsa-<platform>-<timestamp>.md`. Existing
+files are never overwritten — collisions get a `-2`, `-3`, ... suffix.
+
+`/copy` puts the raw markdown response on the clipboard via Windows `clip`
+(no frontmatter, no appendix), ready to paste anywhere.
 
 ---
 
