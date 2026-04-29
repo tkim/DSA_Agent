@@ -7,6 +7,8 @@ Usage:
 
 Commands (type during chat):
     /platform auto|databricks|snowflake|aws   switch platform
+    /save [filename]                          save last response to Downloads as .md
+    /copy                                     copy last response (raw markdown) to clipboard
     /reset                                    clear conversation history
     /quit  or  exit  or  Ctrl-C              exit
 """
@@ -107,6 +109,10 @@ def main():
 
     _banner(current_platform)
 
+    # Track the most recent turn so /save and /copy can act on it
+    last_query: str | None = None
+    last_result: dict | None = None
+
     while True:
         try:
             user_input = console.input("[bold green]you>[/bold green] ").strip()
@@ -127,6 +133,32 @@ def main():
             console.print("[dim]Session history cleared.[/dim]")
             continue
 
+        if user_input.lower() == "/save" or user_input.lower().startswith("/save "):
+            if last_result is None:
+                console.print("[yellow]Nothing to save yet — ask a question first.[/yellow]")
+                continue
+            from orchestrator.exporter import save_turn
+            parts = user_input.split(maxsplit=1)
+            fname = parts[1].strip() if len(parts) == 2 else None
+            try:
+                path = save_turn(last_query or "", last_result, filename=fname)
+                console.print(f"[green]Saved:[/green] {path}")
+            except Exception as exc:
+                console.print(f"[red]Save failed: {exc}[/red]")
+            continue
+
+        if user_input.lower() == "/copy":
+            if last_result is None:
+                console.print("[yellow]Nothing to copy yet — ask a question first.[/yellow]")
+                continue
+            from orchestrator.exporter import copy_to_clipboard
+            text = last_result.get("response", "") or ""
+            if copy_to_clipboard(text):
+                console.print(f"[green]Copied {len(text)} chars to clipboard.[/green]")
+            else:
+                console.print("[red]Clipboard copy failed — no clipboard utility found.[/red]")
+            continue
+
         if user_input.lower().startswith("/platform "):
             chosen = user_input.split(maxsplit=1)[1].strip().lower()
             if chosen in ("auto", "databricks", "snowflake", "aws"):
@@ -145,6 +177,8 @@ def main():
                 console.print(f"[red]Error: {exc}[/red]")
                 continue
 
+        last_query = user_input
+        last_result = result
         _print_result(result)
 
 
