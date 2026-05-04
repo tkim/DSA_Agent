@@ -9,7 +9,10 @@ Commands (type during chat):
     /platform auto|databricks|snowflake|aws   switch platform
     /save [filename]                          save last response to Downloads as .md
     /copy                                     copy last response (raw markdown) to clipboard
-    /reset                                    clear conversation history
+    /history [N]                              list the last N persisted turns (default 10)
+    /search <keyword>                         full-text search across all past Q&A
+    /replay <id>                              re-render a stored turn by its id
+    /reset                                    clear in-session conversation history
     /quit  or  exit  or  Ctrl-C              exit
 """
 from __future__ import annotations
@@ -163,6 +166,32 @@ def _print_result(result: dict):
     console.print()
 
 
+def _print_history_table(turns: list[dict]):
+    if not turns:
+        console.print("[dim]No history yet.[/dim]")
+        return
+    from rich.table import Table
+    t = Table(show_header=True, header_style="bold cyan", expand=False)
+    t.add_column("id", justify="right", style="dim")
+    t.add_column("when", style="dim")
+    t.add_column("platform", style="cyan")
+    t.add_column("ms", justify="right", style="dim")
+    t.add_column("query", overflow="fold")
+    for r in turns:
+        when = (r.get("ts") or "").replace("T", " ")
+        q    = (r.get("query") or "").strip().replace("\n", " ")
+        if len(q) > 80:
+            q = q[:77] + "..."
+        t.add_row(
+            str(r.get("id", "")),
+            when,
+            str(r.get("platform", "")),
+            str(r.get("latency_ms", 0)),
+            q,
+        )
+    console.print(t)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cloud Platform Agent CLI")
     parser.add_argument(
@@ -170,6 +199,11 @@ def main():
         choices=["auto", "databricks", "snowflake", "aws"],
         default="auto",
         help="Lock to a platform or let the router decide (default: auto)",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Disable persistent Q&A history for this session",
     )
     args = parser.parse_args()
     current_platform = args.platform
@@ -183,6 +217,16 @@ def main():
 
     from orchestrator.pipeline import AgentPipeline
     pipeline = AgentPipeline()
+
+    # Persistent history (SQLite + daily markdown)
+    history_enabled = not args.no_history and os.environ.get("DSA_HISTORY", "1") != "0"
+    from orchestrator.history import History, format_full_markdown
+    history = History(enabled=history_enabled)
+    if history_enabled:
+        console.print(
+            f"[dim]History: {history.db_path} "
+            f"({history.count()} turns recorded)[/dim]"
+        )
 
     _banner(current_platform)
 
@@ -236,6 +280,50 @@ def main():
                 console.print("[red]Clipboard copy failed — no clipboard utility found.[/red]")
             continue
 
+        if user_input.lower() == "/history" or user_input.lower().startswith("/history "):
+            parts = user_input.split(maxsplit=1)
+            try:
+                n = int(parts[1]) if len(parts) == 2 else 10
+            except ValueError:
+                console.print("[red]Usage: /history [N][/red]")
+                continue
+            _print_history_table(history.recent(limit=n))
+            continue
+
+        if user_input.lower().startswith("/search "):
+            keyword = user_input.split(maxsplit=1)[1].strip()
+            if not keyword:
+                console.print("[red]Usage: /search <keyword>[/red]")
+                continue
+            matches = history.search(keyword, limit=20)
+            if not matches:
+                console.print(f"[yellow]No matches for '{keyword}'.[/yellow]")
+            else:
+                console.print(f"[dim]{len(matches)} match(es) for '{keyword}':[/dim]")
+                _print_history_table(matches)
+            continue
+
+        if user_input.lower().startswith("/replay "):
+            parts = user_input.split(maxsplit=1)
+            try:
+                turn_id = int(parts[1].strip())
+            except (IndexError, ValueError):
+                console.print("[red]Usage: /replay <id>[/red]")
+                continue
+            turn = history.get(turn_id)
+            if not turn:
+                console.print(f"[yellow]No turn with id {turn_id}.[/yellow]")
+                continue
+            console.print(f"[dim]Replaying turn #{turn_id} from {turn['ts']}[/dim]")
+            console.print(f"[bold green]Q:[/bold green] {turn['query']}")
+            console.print()
+            from orchestrator.history import turn_to_result
+            _print_result(turn_to_result(turn) | {"platform": turn["platform"]})
+            # Make /save and /copy operate on the replayed turn
+            last_query  = turn["query"]
+            last_result = turn_to_result(turn) | {"platform": turn["platform"]}
+            continue
+
         if user_input.lower().startswith("/platform "):
             chosen = user_input.split(maxsplit=1)[1].strip().lower()
             if chosen in ("auto", "databricks", "snowflake", "aws"):
@@ -257,6 +345,12 @@ def main():
         last_query = user_input
         last_result = result
         _print_result(result)
+
+        # Persist to history (SQLite + daily markdown). Best-effort.
+        try:
+            history.append(user_input, result)
+        except Exception as exc:
+            console.print(f"[dim red]History append failed: {exc}[/dim red]")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,8 @@ No cloud API keys required for the AI layer. No web server. No internet connecti
 ├── orchestrator/
 │   ├── session.py                ← conversation history (deque)
 │   ├── pipeline.py               ← router + agents + session wired together
-│   └── exporter.py               ← markdown export for /save and /copy
+│   ├── exporter.py               ← markdown export for /save and /copy
+│   └── history.py                ← SQLite + daily markdown history (FTS5 search)
 │
 ├── infra/
 │   ├── 00_check_hardware.ps1
@@ -268,7 +269,10 @@ within 15 seconds, the CLI exits with a pointer to
 | `/platform auto` | Return to auto-routing |
 | `/save [filename]` | Export the last response to `~/Downloads` as a `.md` file |
 | `/copy` | Copy the last response (raw markdown) to the system clipboard |
-| `/reset` | Clear conversation history |
+| `/history [N]` | List the last N persisted turns (default 10) |
+| `/search <keyword>` | Full-text search across all past Q&A |
+| `/replay <id>` | Re-render a stored turn by its id (and make it the target of `/save`/`/copy`) |
+| `/reset` | Clear in-session conversation history |
 | `/quit` or `Ctrl-C` | Exit |
 
 ### Exporting responses
@@ -294,6 +298,44 @@ files are never overwritten — collisions get a `-2`, `-3`, ... suffix.
 
 `/copy` puts the raw markdown response on the clipboard via Windows `clip`
 (no frontmatter, no appendix), ready to paste anywhere.
+
+### Persistent history
+
+Every Q→A pair is recorded automatically to two parallel stores:
+
+| Store | Path | Purpose |
+|---|---|---|
+| SQLite (with FTS5 index) | `%USERPROFILE%\.dsa_agent\history.db` | Powers `/history`, `/search`, `/replay` |
+| Daily markdown | `%USERPROFILE%\Downloads\dsa-history\YYYY-MM-DD.md` | Human-readable; greppable with any text tool |
+
+Both writes are append-only and best-effort — if either fails the agent
+keeps running. Search uses SQLite's FTS5 full-text index when available
+and falls back to `LIKE` if FTS5 isn't compiled in.
+
+```
+you> /history 5
+┃ id ┃ when                ┃ platform   ┃ ms   ┃ query
+┃ 42 ┃ 2026-04-29 14:31:08 ┃ databricks ┃ 4218 ┃ List tables in main.bronze
+┃ 41 ┃ 2026-04-29 14:18:55 ┃ aws        ┃ 3104 ┃ Show me recent S3 buckets
+...
+
+you> /search liquid clustering
+2 match(es) for 'liquid clustering':
+┃ id ┃ when                ┃ platform   ┃ ms   ┃ query
+┃ 38 ┃ 2026-04-28 11:02:14 ┃ databricks ┃ 5123 ┃ When should I use Liquid Clustering?
+┃ 17 ┃ 2026-04-26 09:14:32 ┃ databricks ┃ 6087 ┃ Liquid clustering vs Z-order
+
+you> /replay 38
+[full response renders again, with the same footer]
+
+you> /save     # saves the replayed turn to ~/Downloads
+```
+
+**Disable history** with the `--no-history` CLI flag or by setting
+`DSA_HISTORY=0` in `.env`. **Override paths** with `DSA_HISTORY_DB` and
+`DSA_HISTORY_MD_DIR` environment variables. The default markdown daily
+log is intentionally kept under `~/Downloads` so you can sync, search,
+or back it up alongside other manually exported answers.
 
 ---
 
@@ -392,6 +434,9 @@ python -m pytest tests/ -v   # 35/35 must pass
 | `CHROMA_PERSIST_DIR` | `.\rag\chroma_db` | `.env` |
 | `HF_HUB_OFFLINE` | `1` | `.env` — blocks HuggingFace network after setup |
 | `TRANSFORMERS_OFFLINE` | `1` | `.env` — same |
+| `DSA_HISTORY` | `1` | `.env` — set to `0` to disable persistent Q&A history |
+| `DSA_HISTORY_DB` | _(auto)_ | `.env` — override SQLite path (default `~/.dsa_agent/history.db`) |
+| `DSA_HISTORY_MD_DIR` | _(auto)_ | `.env` — override daily markdown dir (default `~/Downloads/dsa-history/`) |
 
 ---
 ## Why no agent framework?
