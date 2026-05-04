@@ -16,7 +16,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 import ollama
 
@@ -29,6 +34,74 @@ console = Console()
 
 _OLLAMA_BASE  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 _AGENT_MODEL  = os.getenv("AGENT_MODEL", "gemma4-agent")
+
+
+def _ollama_is_up(timeout: float = 1.5) -> bool:
+    """Quick health probe against the Ollama HTTP API."""
+    try:
+        with urllib.request.urlopen(f"{_OLLAMA_BASE}/api/version", timeout=timeout):
+            return True
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+        return False
+
+
+def _start_ollama() -> bool:
+    """
+    Launch the Ollama server in the background.
+
+    On Windows the installer registers `ollama.exe` on PATH. We spawn it
+    detached so it survives the CLI process. Returns True if the API
+    becomes reachable within ~15s.
+    """
+    exe = shutil.which("ollama")
+    if not exe:
+        console.print(
+            "[red]Ollama is not installed or not on PATH.[/red] "
+            "Install it via [cyan].\\infra\\02_install_ollama.ps1[/cyan]."
+        )
+        return False
+
+    console.print("[dim]Ollama not running — starting it now...[/dim]", end="\r")
+    try:
+        # CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS so closing this terminal
+        # doesn't kill the server. Stdout/stderr discarded — Ollama logs to
+        # %USERPROFILE%\.ollama\logs\server.log on its own.
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP   # type: ignore[attr-defined]
+                | 0x00000008                          # DETACHED_PROCESS
+            )
+        subprocess.Popen(
+            [exe, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    except Exception as exc:
+        console.print(f"\n[red]Failed to spawn Ollama: {exc}[/red]")
+        return False
+
+    # Poll until the API responds (max ~15s)
+    for _ in range(30):
+        if _ollama_is_up():
+            console.print(" " * 60, end="\r")
+            console.print("[dim]Ollama started.[/dim]")
+            return True
+        time.sleep(0.5)
+
+    console.print("\n[red]Ollama did not become ready within 15s.[/red] "
+                  "Check %USERPROFILE%\\.ollama\\logs\\server.log")
+    return False
+
+
+def _ensure_ollama_running() -> bool:
+    """If the Ollama API isn't reachable, try to start it. Return True on success."""
+    if _ollama_is_up():
+        return True
+    return _start_ollama()
 
 
 def _warm_ollama():
@@ -100,6 +173,10 @@ def main():
     )
     args = parser.parse_args()
     current_platform = args.platform
+
+    if not _ensure_ollama_running():
+        console.print("[red]Cannot continue without Ollama. Exiting.[/red]")
+        sys.exit(1)
 
     _warm_rag()
     _warm_ollama()
