@@ -242,13 +242,22 @@ Optional — lock to a specific platform:
 ### What happens at startup
 
 ```
-1. all-MiniLM-L6-v2 loaded into RAM      (from local HF cache, ~5s)
-2. ChromaDB client connected              (local rag/chroma_db/, instant)
-3. gemma4-agent loaded into GPU VRAM     (keep_alive=120m, ~5-10s)
-4. you> prompt appears — ready to query
+1. Ollama health check                    (probes http://localhost:11434)
+   └─ if down: auto-spawn `ollama serve` detached, wait up to 15s
+2. all-MiniLM-L6-v2 loaded into RAM       (from local HF cache, ~5s)
+3. ChromaDB client connected              (local rag/chroma_db/, instant)
+4. gemma4-agent loaded into GPU VRAM      (keep_alive=120m, ~5-10s)
+5. you> prompt appears — ready to query
 ```
 
 The model stays in VRAM for 2 hours of inactivity. Subsequent queries are immediate.
+
+If Ollama isn't running, the CLI starts it for you — no need to launch the
+tray app first. The spawned server runs detached, so closing the CLI
+terminal won't kill it. If Ollama isn't installed or fails to start
+within 15 seconds, the CLI exits with a pointer to
+`infra\02_install_ollama.ps1` and the server log path
+(`%USERPROFILE%\.ollama\logs\server.log`).
 
 ### CLI commands
 
