@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -164,6 +165,40 @@ def _print_result(result: dict):
         meta.append(f"  rag=[{files}]", style="dim magenta")
     console.print(meta)
     console.print()
+
+
+def _run_cancellable(pipeline, query: str, override) -> dict | None:
+    """
+    Run pipeline.run() in a daemon thread so the main thread stays responsive
+    to Ctrl-C. Returns the result, or None if the user cancelled.
+
+    The thread keeps running in the background after cancellation (its HTTP
+    request to Ollama will finish server-side) but we discard the result.
+    """
+    box: dict = {}
+
+    def _worker():
+        try:
+            box["result"] = pipeline.run(query, platform_override=override)
+        except Exception as exc:
+            box["error"] = exc
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+    with console.status(
+        "[bold yellow]thinking...[/bold yellow]  [dim](Ctrl-C to cancel)[/dim]"
+    ):
+        try:
+            while t.is_alive():
+                t.join(timeout=0.2)
+        except KeyboardInterrupt:
+            console.print("[yellow]Cancelled. (server request may finish in background.)[/yellow]")
+            return None
+
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
 
 
 def _print_history_table(turns: list[dict]):
@@ -335,12 +370,14 @@ def main():
 
         # --- agent query ---
         override = None if current_platform == "auto" else current_platform
-        with console.status("[bold yellow]thinking...[/bold yellow]"):
-            try:
-                result = pipeline.run(user_input, platform_override=override)
-            except Exception as exc:
-                console.print(f"[red]Error: {exc}[/red]")
-                continue
+        try:
+            result = _run_cancellable(pipeline, user_input, override)
+        except Exception as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            continue
+        if result is None:
+            # User pressed Ctrl-C during thinking; loop back to prompt
+            continue
 
         last_query = user_input
         last_result = result

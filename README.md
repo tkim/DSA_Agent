@@ -273,7 +273,8 @@ within 15 seconds, the CLI exits with a pointer to
 | `/search <keyword>` | Full-text search across all past Q&A |
 | `/replay <id>` | Re-render a stored turn by its id (and make it the target of `/save`/`/copy`) |
 | `/reset` | Clear in-session conversation history |
-| `/quit` or `Ctrl-C` | Exit |
+| `Ctrl-C` (while `thinking...`) | Cancel the current query and return to the prompt |
+| `/quit` or `Ctrl-C` (at the prompt) | Exit |
 
 ### Exporting responses
 
