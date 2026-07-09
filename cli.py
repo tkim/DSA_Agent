@@ -131,6 +131,41 @@ def _warm_rag():
     console.print(" " * 40, end="\r")  # clear the line
 
 
+def _auto_refresh_docs():
+    """
+    Check upstream docs for changes on launch and re-ingest anything stale.
+
+    Runs in a background daemon thread so startup is never blocked, and it is
+    fully best-effort: offline machines, GitHub rate limits, or any error just
+    leave the existing corpus in place (progress is logged to rag/refresh.log,
+    not the REPL). Only platforms whose upstream commit SHA moved get
+    re-embedded, so the common "nothing changed" case is a few cheap API calls.
+
+    Controls (.env):
+      RAG_AUTO_REFRESH=0            disable entirely
+      RAG_REFRESH_INTERVAL_HOURS=N  check at most once per N hours (0 = every launch)
+      GITHUB_TOKEN=...              raise GitHub's 60 req/hr anon limit to 5000
+    """
+    if os.getenv("RAG_AUTO_REFRESH", "1") == "0":
+        return
+
+    def _worker():
+        try:
+            from rag import refresher
+            summary = refresher.auto_refresh()
+            changed = summary.get("changed") or []
+            if changed:
+                console.print(
+                    f"[dim green][rag] docs updated to latest: "
+                    f"{', '.join(changed)}[/dim green]"
+                )
+        except Exception:
+            # A doc refresh must never take down the session.
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _banner(platform: str):
     console.print(Panel(
         "[bold cyan]Cloud Platform Agent[/bold cyan]\n"
@@ -247,6 +282,7 @@ def main():
         console.print("[red]Cannot continue without Ollama. Exiting.[/red]")
         sys.exit(1)
 
+    _auto_refresh_docs()   # background: keep RAG corpus current, never blocks
     _warm_rag()
     _warm_ollama()
 

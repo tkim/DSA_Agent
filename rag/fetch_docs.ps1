@@ -1,45 +1,28 @@
-$dirs = "rag\docs\databricks","rag\docs\snowflake","rag\docs\aws"
-$dirs | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+# fetch_docs.ps1 — one-shot bootstrap of the full RAG corpus for all three
+# platforms, then build the ChromaDB collections.
+#
+# This is a thin front-end over rag/refresher.py, which is the single source of
+# truth for which docs we track and is ALSO what runs automatically on every
+# `python cli.py` launch to keep the corpus current (SHA-tracked, incremental).
+# Running this script does a full forced fetch + re-ingest — use it for first-
+# time setup or to rebuild everything from scratch.
+#
+#   Databricks : delta-io/delta docs (docs/src/content/docs/*.mdx)
+#   Snowflake  : connector/snowpark READMEs + sfquickstarts guides
+#   AWS        : botocore service definitions + amazon-s3/glue user guides,
+#                PLUS boto3 SDK client references (generated below)
 
-# Delta Lake moved their docs into an Astro site (docs/src/content/docs/*.mdx).
-# The old raw paths (/docs/source/*.md) are gone. These are the current files.
-$deltaBase = "https://raw.githubusercontent.com/delta-io/delta/master/docs/src/content/docs"
+$ErrorActionPreference = "Stop"
 
-Write-Host "Fetching Databricks/Delta Lake docs..." -ForegroundColor Cyan
-@(
-    @{ Uri = "$deltaBase/quick-start.mdx";            Out = "rag\docs\databricks\delta_quick_start.mdx" }
-    @{ Uri = "$deltaBase/best-practices.mdx";         Out = "rag\docs\databricks\delta_best_practices.mdx" }
-    @{ Uri = "$deltaBase/delta-batch.mdx";            Out = "rag\docs\databricks\delta_batch.mdx" }
-    @{ Uri = "$deltaBase/concurrency-control.mdx";    Out = "rag\docs\databricks\delta_concurrency.mdx" }
-    @{ Uri = "$deltaBase/delta-update.mdx";           Out = "rag\docs\databricks\delta_update.mdx" }
-    @{ Uri = "$deltaBase/delta-faq.mdx";              Out = "rag\docs\databricks\delta_faq.mdx" }
-    @{ Uri = "$deltaBase/versioning.mdx";             Out = "rag\docs\databricks\delta_versioning.mdx" }
-    @{ Uri = "$deltaBase/delta-clustering.mdx";       Out = "rag\docs\databricks\delta_clustering.mdx" }
-) | ForEach-Object {
-    try   { Invoke-WebRequest -Uri $_.Uri -OutFile $_.Out -EA Stop; Write-Host "  OK $($_.Out)" }
-    catch { Write-Warning "  SKIP $($_.Out): $($_.Exception.Message)" }
-}
-
-Write-Host "`nFetching Snowflake docs..." -ForegroundColor Cyan
-@(
-    @{ Uri = "https://raw.githubusercontent.com/snowflakedb/snowflake-connector-python/main/README.md"
-       Out = "rag\docs\snowflake\connector_python_readme.md" }
-    @{ Uri = "https://raw.githubusercontent.com/snowflakedb/snowpark-python/main/README.md"
-       Out = "rag\docs\snowflake\snowpark_python_readme.md" }
-    @{ Uri = "https://raw.githubusercontent.com/Snowflake-Labs/sfquickstarts/master/site/sfguides/src/getting-started-snowflake-python-api/getting-started-snowflake-python-api.md"
-       Out = "rag\docs\snowflake\getting_started_python_api.md" }
-    @{ Uri = "https://raw.githubusercontent.com/Snowflake-Labs/sfquickstarts/master/site/sfguides/src/data-engineering-with-snowpark-python-intro/data-engineering-with-snowpark-python-intro.md"
-       Out = "rag\docs\snowflake\data_engineering_snowpark.md" }
-    @{ Uri = "https://raw.githubusercontent.com/Snowflake-Labs/sfquickstarts/master/site/sfguides/src/getting-started-iceberg-tables/getting-started-iceberg-tables.md"
-       Out = "rag\docs\snowflake\iceberg_tables.md" }
-) | ForEach-Object {
-    try   { Invoke-WebRequest -Uri $_.Uri -OutFile $_.Out -EA Stop; Write-Host "  OK $($_.Out)" }
-    catch { Write-Warning "  SKIP $($_.Out): $($_.Exception.Message)" }
-}
-
-Write-Host "`nGenerating AWS Boto3 reference docs..." -ForegroundColor Cyan
-# Use the project venv python so boto3 resolves correctly.
 $py = if (Test-Path ".\.venv\Scripts\python.exe") { ".\.venv\Scripts\python.exe" } else { "python" }
+
+New-Item -ItemType Directory -Force -Path "rag\docs\databricks","rag\docs\snowflake","rag\docs\aws" | Out-Null
+
+# --- AWS: boto3 SDK client references (pydoc) -------------------------------
+# Generated locally from the installed boto3; the refresher below adds the
+# SHA-tracked botocore + awsdocs sources on top. Both live in rag/docs/aws and
+# are embedded together, so this must run BEFORE the refresher's aws re-ingest.
+Write-Host "Generating AWS boto3 SDK reference docs..." -ForegroundColor Cyan
 & $py -c @"
 import boto3, pydoc, os
 os.makedirs('rag/docs/aws', exist_ok=True)
@@ -54,4 +37,10 @@ for svc in ['s3','glue','bedrock-runtime','iam','lambda','ec2']:
         print(f'  SKIP {svc}: {e}')
 "@
 
-Write-Host "`nDone. Run: .\.venv\Scripts\python.exe -m rag.ingestor --all" -ForegroundColor Green
+# --- All tracked sources + build the store ---------------------------------
+# --force re-fetches every source regardless of stored SHA and re-ingests all
+# three collections (the aws pass picks up the boto3 files generated above).
+Write-Host "`nFetching tracked docs and rebuilding ChromaDB (this can take a few minutes)..." -ForegroundColor Cyan
+& $py -m rag.refresher --force
+
+Write-Host "`nDone. All three collections are current. Launch with: $py cli.py" -ForegroundColor Green
